@@ -8,14 +8,18 @@ from Cryptodome.Signature import DSS
 
 
 def encode_json_as_bytes(j):
-    return bytes(json.dumps(j), encoding='utf-8')
+    return json.dumps(j).encode('utf-8')
+
+
+def base64_encode_as_bytes(data):
+    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=').encode('utf-8')
 
 
 def base64_encode_as_string(data):
     return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
 
 
-def jws_encode_sign_and_return_bytes(private_key, payload_dict):
+def jws_encode_sign(private_key, payload_dict):
     public_key = private_key.public_key()
     jwk = {}
     jwk['kty'] = 'EC'
@@ -28,17 +32,17 @@ def jws_encode_sign_and_return_bytes(private_key, payload_dict):
     jws_params['alg'] = 'ES256'
     jws_params['jwk'] = jwk
 
-    to_be_signed = base64_encode_as_string(
-        encode_json_as_bytes(jws_params)) + '.' + base64_encode_as_string(
-            encode_json_as_bytes(payload_dict))
-    to_be_signed_bytes = to_be_signed.encode('utf-8')
+    jws_params.clear()
 
-    h = SHA256.new(to_be_signed_bytes)
+    to_be_signed = base64_encode_as_bytes(
+        encode_json_as_bytes(jws_params)) + b'.' + base64_encode_as_bytes(
+            encode_json_as_bytes(payload_dict))
+
+    h = SHA256.new(to_be_signed)
     signer = DSS.new(private_key, 'fips-186-3')
     signature = signer.sign(h)
 
-    return to_be_signed_bytes + b'.' + base64_encode_as_string(
-        signature).encode('utf-8')
+    return base64_encode_as_string(to_be_signed + b'.' + base64_encode_as_bytes(signature))
 
 
 private_key = ECC.generate(curve='P-256')
@@ -50,19 +54,19 @@ f.write(private_key.public_key().export_key(format = 'PEM'))
 f.close()
 
 new_account_params = {}
-new_account_params['Contact'] = 'Tejaswi'
-new_account_params['TermsOfServiceAgreed'] = True
+#new_account_params['Contact'] = 'Tejaswi'
+#new_account_params['TermsOfServiceAgreed'] = True
 
 request_headers = {}
 request_headers['Content-Type'] = 'application/jose+json'
 
-data = jws_encode_sign_and_return_bytes(private_key, new_account_params)
+data = {'payload': jws_encode_sign(private_key, new_account_params), 'signatures': []}
 
 print(data)
 
 r = requests.post(
     'https://localhost:14000/sign-me-up',
-    data=data,
+    data=json.dumps(data),
     headers=request_headers,
     verify=
     '/home/tejaswi/go/src/github.com/letsencrypt/pebble/test/certs/pebble.minica.pem'
