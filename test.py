@@ -50,6 +50,14 @@ def jws_encode_sign(private_key, payload_dict, jws_params):
 
     #return base64_encode_as_string(to_be_signed + b'.' + base64_encode_as_bytes(signature))
 
+def get_nonce():
+    r = requests.head(
+        'https://localhost:14000/nonce-plz',
+        verify=
+        '/home/tejaswi/go/src/github.com/letsencrypt/pebble/test/certs/pebble.minica.pem'
+    )
+    return r.headers['Replay-Nonce']
+
 
 private_key = ECC.generate(curve='P-256')
 
@@ -62,7 +70,7 @@ request_headers = {}
 request_headers['Content-Type'] = 'application/jose+json'
 
 url = 'https://localhost:14000/sign-me-up'
-nonce = open('nonce.txt', 'r').read()
+nonce = get_nonce()
 
 jws_params = get_jws_params(private_key, url, nonce)
 
@@ -82,8 +90,5 @@ r = requests.post(
     '/home/tejaswi/go/src/github.com/letsencrypt/pebble/test/certs/pebble.minica.pem'
 )
 
-f = open('nonce.txt', 'w')
-f.write(r.headers['Replay-Nonce'])
-f.close()
-print(r.headers)
 print(r.json())
+
