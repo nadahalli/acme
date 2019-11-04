@@ -2,6 +2,7 @@ import base64
 import json
 import requests
 import struct
+import random
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import ECC
 from Cryptodome.Signature import DSS
@@ -18,7 +19,8 @@ def base64_encode_as_bytes(data):
 def base64_encode_as_string(data):
     return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
 
-def get_jws_params(private_key):
+
+def get_jws_params(private_key, url, nonce):
     public_key = private_key.public_key()
     jwk = {}
     jwk['kty'] = 'EC'
@@ -30,13 +32,12 @@ def get_jws_params(private_key):
     jws_params['typ'] = 'JWT'
     jws_params['alg'] = 'ES256'
     jws_params['jwk'] = jwk
-    jws_params['url'] = 'https://test.com'
-    jws_params['nonce'] = "test"
+    jws_params['url'] = url
+    jws_params['nonce'] = nonce
     return jws_params
 
 
-def jws_encode_sign(private_key, payload_dict):
-    jws_params = get_jws_params(private_key)
+def jws_encode_sign(private_key, payload_dict, jws_params):
     to_be_signed = base64_encode_as_bytes(
         encode_json_as_bytes(jws_params)) + b'.' + base64_encode_as_bytes(
             encode_json_as_bytes(payload_dict))
@@ -46,44 +47,43 @@ def jws_encode_sign(private_key, payload_dict):
     signature = signer.sign(h)
     return base64_encode_as_string(signature)
 
+
     #return base64_encode_as_string(to_be_signed + b'.' + base64_encode_as_bytes(signature))
 
 
 private_key = ECC.generate(curve='P-256')
-f = open('private_key.pem', 'w')
-f.write(private_key.export_key(format = 'PEM'))
-f.close()
-f = open('public_key.pem', 'w')
-f.write(private_key.public_key().export_key(format = 'PEM'))
-f.close()
 
-payload = {'x': 'y'}
-#new_account_params['Contact'] = 'Tejaswi'
-#new_account_params['TermsOfServiceAgreed'] = True
+payload = {}
+payload['Contact'] = []
+payload['TermsOfServiceAgreed'] = True
+payload['OnlyReturnExisting'] = False
 
 request_headers = {}
 request_headers['Content-Type'] = 'application/jose+json'
 
+url = 'https://localhost:14000/sign-me-up'
+nonce = open('nonce.txt', 'r').read()
+
+jws_params = get_jws_params(private_key, url, nonce)
+
+
 data = {
     'payload': base64_encode_as_string(encode_json_as_bytes(payload)),
     'signatures': [],
-    'signature': jws_encode_sign(private_key, payload),
-    'protected': base64_encode_as_string(encode_json_as_bytes(get_jws_params(private_key))),
+    'signature': jws_encode_sign(private_key, payload, jws_params),
+    'protected': base64_encode_as_string(encode_json_as_bytes(jws_params)),
 }
-"""
-data = {
-    'payload': base64_encode_as_string(b'eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhdWQxIiwic3ViIjoic3ViamVjdDEiLCJpc3MiOiJpc3N1ZXIxIn0.IjWgS2KG-ey1Igvh0TGYPCJhg-gPjk_jifp5HcmkjZKpYmp-CZYm31riAHw9l7cDghLK9YaBCAtBhJ0OXguNRA'),
-    'signatures': [],
-    'protected': base64_encode_as_string(encode_json_as_bytes({'x': 'y'})),
-}
-"""
 
 r = requests.post(
-    'https://localhost:14000/sign-me-up',
+    url,
     data=json.dumps(data),
     headers=request_headers,
     verify=
     '/home/tejaswi/go/src/github.com/letsencrypt/pebble/test/certs/pebble.minica.pem'
 )
 
+f = open('nonce.txt', 'w')
+f.write(r.headers['Replay-Nonce'])
+f.close()
+print(r.headers)
 print(r.json())
