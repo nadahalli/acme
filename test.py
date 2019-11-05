@@ -3,6 +3,8 @@ import json
 import requests
 import struct
 import random
+import prettyprinter
+prettyprinter.install_extras(['requests'])
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import ECC
 from Cryptodome.Signature import DSS
@@ -52,9 +54,12 @@ def get_jws_params(private_key, url, kid=None):
 
 
 def jws_encode_sign(private_key, payload_dict, jws_params):
-    to_be_signed = base64_encode_as_bytes(
-        encode_json_as_bytes(jws_params)) + b'.' + base64_encode_as_bytes(
+    to_be_signed = base64_encode_as_bytes(encode_json_as_bytes(jws_params)) + b'.'
+    if len(payload_dict) != 0:
+        to_be_signed +=  base64_encode_as_bytes(
             encode_json_as_bytes(payload_dict))
+    else:
+        to_be_signed += b''
 
     h = SHA256.new(to_be_signed)
     signer = DSS.new(private_key, 'fips-186-3')
@@ -68,7 +73,7 @@ def make_request(private_key, account, url, payload):
     jws_params = get_jws_params(private_key, url, account)
 
     data = {
-        'payload': base64_encode_as_string(encode_json_as_bytes(payload)),
+        'payload': base64_encode_as_string(encode_json_as_bytes(payload)) if len(payload) != 0 else '',
         'signature': jws_encode_sign(private_key, payload, jws_params),
         'protected': base64_encode_as_string(encode_json_as_bytes(jws_params)),
     }
@@ -97,6 +102,8 @@ def new_account(private_key):
 
     headers, response = make_request(private_key, None, url, payload)
 
+    prettyprinter.pprint(headers)
+    prettyprinter.pprint(response)
     return headers['Location']
 
 def new_order(private_key, account):
@@ -111,7 +118,19 @@ def new_order(private_key, account):
     headers, response = make_request(private_key, account, url, payload)
     return response
 
+def auths(private_key, account, auths):
+    payload = {}
+    result = []
+    for url in auths:
+        headers, response = make_request(private_key, account, url, payload)
+        result.append([headers, response])
+    return result
+
 private_key = ECC.generate(curve='P-256')
 account = new_account(private_key)
-print(account)
-print(new_order(private_key, account))
+order = new_order(private_key, account)
+prettyprinter.pprint(order)
+auths_result = auths(private_key, account, order['authorizations'])
+for a in auths_result:
+    prettyprinter.pprint(dict(a[0]))
+    prettyprinter.pprint(dict(a[1]))
