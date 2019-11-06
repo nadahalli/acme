@@ -12,7 +12,7 @@ from Cryptodome.Signature import DSS
 
 
 def encode_json_as_bytes(j):
-    return json.dumps(j).encode('utf-8')
+    return json.dumps(j, separators=(',', ':'), sort_keys=True).encode('utf-8')
 
 
 def base64_encode_as_bytes(data):
@@ -38,6 +38,11 @@ def get_jwk(private_key):
     jwk['x'] = base64_encode_as_string(public_key.pointQ.x.to_bytes())
     jwk['y'] = base64_encode_as_string(public_key.pointQ.y.to_bytes())
     return jwk
+
+def get_jwk_thumbprint(private_key):
+    jwk = get_jwk(private_key)
+    h = SHA256.new(encode_json_as_bytes(jwk))
+    return base64_encode_as_bytes(h.digest())
 
 def get_jws_params(private_key, url, kid=None):
     jws_params = {}
@@ -132,9 +137,10 @@ def prompt_challenge(private_key, account, url):
     payload = {}
     make_request(private_key, account, url, payload)
 
-def do_dns(challenge):
-    txt_record = '_acme-challenge.example.org=' + challenge['token']
-    txt_record = challenge['token']
+def do_dns(private_key, challenge):
+    to_be_hashed = bytes(challenge['token'], 'utf-8') + b'.' + get_jwk_thumbprint(private_key)
+    h = SHA256.new(to_be_hashed)
+    txt_record = base64_encode_as_string(h.digest())
     f = open('x/_acme-challenge.example.org', 'w')
     f.write(txt_record)
     f.close()
@@ -146,7 +152,7 @@ prettyprinter.pprint(order)
 challenges = auths(private_key, account, order['authorizations'])
 for c in challenges:
     if c['type'] == 'dns-01':
-        do_dns(c)
+        do_dns(private_key, c)
 
 for c in challenges:
     if c['type'] == 'dns-01':
