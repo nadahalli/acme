@@ -4,6 +4,7 @@ import requests
 import struct
 import random
 import prettyprinter
+import time
 prettyprinter.install_extras(['requests'])
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import ECC
@@ -55,7 +56,7 @@ def get_jws_params(private_key, url, kid=None):
 
 def jws_encode_sign(private_key, payload_dict, jws_params):
     to_be_signed = base64_encode_as_bytes(encode_json_as_bytes(jws_params)) + b'.'
-    if len(payload_dict) != 0:
+    if payload_dict != None:
         to_be_signed +=  base64_encode_as_bytes(
             encode_json_as_bytes(payload_dict))
     else:
@@ -73,7 +74,7 @@ def make_request(private_key, account, url, payload):
     jws_params = get_jws_params(private_key, url, account)
 
     data = {
-        'payload': base64_encode_as_string(encode_json_as_bytes(payload)) if len(payload) != 0 else '',
+        'payload': base64_encode_as_string(encode_json_as_bytes(payload)) if payload != None else '',
         'signature': jws_encode_sign(private_key, payload, jws_params),
         'protected': base64_encode_as_string(encode_json_as_bytes(jws_params)),
     }
@@ -119,18 +120,39 @@ def new_order(private_key, account):
     return response
 
 def auths(private_key, account, auths):
-    payload = {}
+    payload = None
     result = []
     for url in auths:
-        headers, response = make_request(private_key, account, url, payload)
-        result.append([headers, response])
+        _, response = make_request(private_key, account, url, payload)
+        prettyprinter.pprint(response)
+        result.extend(response['challenges'])
     return result
+
+def prompt_challenge(private_key, account, url):
+    payload = {}
+    make_request(private_key, account, url, payload)
+
+def do_dns(challenge):
+    txt_record = '_acme-challenge.example.org=' + challenge['token']
+    txt_record = challenge['token']
+    f = open('x/_acme-challenge.example.org', 'w')
+    f.write(txt_record)
+    f.close()
 
 private_key = ECC.generate(curve='P-256')
 account = new_account(private_key)
 order = new_order(private_key, account)
 prettyprinter.pprint(order)
-auths_result = auths(private_key, account, order['authorizations'])
-for a in auths_result:
-    prettyprinter.pprint(dict(a[0]))
-    prettyprinter.pprint(dict(a[1]))
+challenges = auths(private_key, account, order['authorizations'])
+for c in challenges:
+    if c['type'] == 'dns-01':
+        do_dns(c)
+
+for c in challenges:
+    if c['type'] == 'dns-01':
+        prompt_challenge(private_key, account, c['url'])
+
+        
+
+    
+
