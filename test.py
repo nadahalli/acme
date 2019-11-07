@@ -13,6 +13,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 
 
 def encode_json_as_bytes(j):
@@ -98,7 +100,9 @@ def jws_encode_sign(private_key, payload_dict, jws_params):
 
     return sign(private_key, to_be_signed)
 
-def make_request(private_key, account, url, payload):
+def make_request(private_key, account, url, payload, count = 10):
+    if (count == 0):
+        return
     request_headers = {}
     request_headers['Content-Type'] = 'application/jose+json'
 
@@ -118,7 +122,17 @@ def make_request(private_key, account, url, payload):
         '/home/tejaswi/go/src/github.com/letsencrypt/pebble/test/certs/pebble.minica.pem'
     )
 
-    return r.headers, r.json()
+    prettyprinter.pprint(r.headers)
+
+    try:
+        if r.json().get('type') == 'urn:ietf:params:acme:error:badNonce':
+            print('Retrying due to bad nonce....')
+            return make_request(private_key, account, url, payload, count - 1)
+        else:
+            return r.headers, r.json()
+    except json.decoder.JSONDecodeError:
+        return r.headers, r.text
+
 
 
 def new_account(private_key):
@@ -134,7 +148,7 @@ def new_account(private_key):
 
     headers, response = make_request(private_key, None, url, payload)
 
-    prettyprinter.pprint(headers)
+    print('ACCOUNT')
     prettyprinter.pprint(response)
 
     return headers['Location']
@@ -143,12 +157,15 @@ def new_order(private_key, account):
     payload = {}
     payload['identifiers'] = [{
         'type': 'dns',
-        'value': 'example.org'
+        'value': 'testintamin.com'
     }]
 
     url = 'https://localhost:14000/order-plz'
 
     headers, response = make_request(private_key, account, url, payload)
+    response['order_url'] = headers['Location']
+    print('ORDER')
+    prettyprinter.pprint(response)
     return response
 
 def auths(private_key, account, auths):
@@ -156,6 +173,8 @@ def auths(private_key, account, auths):
     result = []
     for url in auths:
         _, response = make_request(private_key, account, url, payload)
+        print('AUTH_RESPONSE')
+        prettyprinter.pprint(response)
         result.extend(response['challenges'])
     return result
 
@@ -166,7 +185,7 @@ def prompt_challenge(private_key, account, url):
 def do_dns(private_key, challenge):
     to_be_hashed = bytes(challenge['token'], 'utf-8') + b'.' + get_jwk_thumbprint(private_key)
     txt_record = base64_encode_as_string(hash_256(to_be_hashed))
-    f = open('x/_acme-challenge.example.org', 'w')
+    f = open('x/_acme-challenge.testintamin.com', 'w')
     f.write(txt_record)
     f.close()
 
@@ -180,30 +199,53 @@ def do_dns_challenge(private_key, account, order):
         if c['type'] == 'dns-01':
             prompt_challenge(private_key, account, c['url'])
 
-    time.sleep(2)
+def make_csr_request(private_key, account, order):
+    payload = {}
+    csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, u'CH'),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u'Schwyz'),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, u'Wollerau'),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u'Intamin'),
+        x509.NameAttribute(NameOID.COMMON_NAME, u'testintamin.com'),
+    ])).add_extension(
+        x509.SubjectAlternativeName([
+            x509.DNSName(u'testintamin.com'),
+        ]),
+        critical=False,
+    ).sign(private_key, hashes.SHA256(), default_backend())
+    payload['csr'] = base64_encode_as_string(csr.public_bytes(serialization.Encoding.DER))
+    headers, response = make_request(private_key, account, order['finalize'], payload)
+    print('CSR_RESPONSE')
+    prettyprinter.pprint(response)
 
+def poll_order(private_key, account, order):
+    payload = None
+    headers, response = make_request(private_key, account, order['order_url'], payload)
+    print('Polling response')
+    prettyprinter.pprint(response)
+    return response
+
+def download_certificate(private_key, account, order):
+    payload = None
+    headers, response = make_request(private_key, account, order['certificate'], payload)
+    print('CERTIFICATE_RESPONSE')
+    prettyprinter.pprint(response)
+    return response
     
 private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 account = new_account(private_key)
 order = new_order(private_key, account)
-prettyprinter.pprint(order)
-challenges = auths(private_key, account, order['authorizations'])
-for c in challenges:
-    if c['type'] == 'dns-01':
-        do_dns(private_key, c)
-
-for c in challenges:
-    if c['type'] == 'dns-01':
-        prompt_challenge(private_key, account, c['url'])
-
-"""
-
-account = new_account(private_key)
-order = new_order(private_key, account)
-do_dns_challenge_and_finalize(private_key, account, order)
-
-prettyprinter.pprint(order)
-"""
+do_dns_challenge(private_key, account, order)
+time.sleep(10)
+print('------------FIRST---------------')
+make_csr_request(private_key, account, order)
+time.sleep(10)
+print('------------SECOND---------------')
+order = poll_order(private_key, account, order)
+certificate = download_certificate(private_key, account, order)
+certf = open('cert.pem', 'w')
+certf.write(certificate)
+cert.close()
         
 
     
