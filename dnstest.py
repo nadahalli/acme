@@ -2,7 +2,7 @@ import socketserver
 import argparse
 import io
 
-from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion
+from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion, TXT, QTYPE
 
 d = DNSRecord(DNSHeader(qr=1,aa=1,ra=1),
               q=DNSQuestion("abc.com"),
@@ -11,13 +11,15 @@ d = DNSRecord(DNSHeader(qr=1,aa=1,ra=1),
 class DNSHandler(socketserver.BaseRequestHandler):
   def handle(self):
     data = self.request[0]
-    d = DNSRecord.parse(data)
-    name = '.'.join(map(lambda x: x.decode('utf-8'), d.questions[0].qname.label))
-
-    d = DNSRecord(DNSHeader(qr=1,aa=1,ra=1),
-                  q=DNSQuestion(name),
-                  a=RR("name",rdata=A("1.2.3.4")))
+    socket = self.request[1]
     
+    d = DNSRecord.parse(data)
+    q = d.questions[0]
+    name = '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label))
+    a = d.reply()
+    a.add_answer(RR(name, QTYPE.A, rdata=A("1.2.3.4")))
+    a.add_answer(RR(name, QTYPE.TXT,rdata=TXT("Mytest")))
+    socket.sendto(a.pack(), self.client_address)
 
 
 if __name__ == '__main__':

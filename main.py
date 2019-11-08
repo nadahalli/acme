@@ -12,6 +12,7 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion, TXT, QTYPE
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.client import parse_headers
 from socketserver import BaseRequestHandler, UDPServer
 from ssl import wrap_socket
 
@@ -52,6 +53,19 @@ ACME_SERVER_CERT = './pebble_https_ca.pem'
 
 prettyprinter.install_extras(['requests'])
 
+def read_answer(name):
+    ans = ''
+    try:
+        apath = FILE_PATH + name.lower()
+        print('Trying to open file ', apath)
+        afile = open(apath, 'r')
+        ans = afile.read().strip()
+        afile.close()
+    except:
+        pass
+    return ans
+
+
 class AcmeDNSChallengeHandler(BaseRequestHandler):
     ip = None
         
@@ -61,17 +75,10 @@ class AcmeDNSChallengeHandler(BaseRequestHandler):
     
         d = DNSRecord.parse(data)
         q = d.questions[0]
-        name = '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label))
+        name = 'dns.' + '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label[1:]))
 
-        ans = ''
-        try:
-            apath = FILE_PATH + name.lower()
-            afile = open(apath, 'r')
-            ans = afile.read().strip()
-            afile.close()
-        except:
-            pass
-        
+        ans = read_answer(name)
+
         a = d.reply()
         a.add_answer(RR(name, QTYPE.A, rdata=A(self.ip)))
         a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(ans)))
@@ -84,7 +91,10 @@ class AcmeHTTPChallengeHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
-        self.wfile.write(b"Hello World!\n")
+        name = 'http.' + self.headers['Host'].split(':')[0]
+        answer = read_answer(name)
+        print('-' * 10, answer)
+        self.wfile.write(answer.encode('utf-8'))
         return
 
 class CertificateHandler(BaseHTTPRequestHandler):
@@ -220,6 +230,7 @@ def new_account(private_key):
 def new_order(domains, private_key, account):
     payload = {}
     ids = []
+
     for domain in domains:
         ids.append({
             'type': 'dns',
@@ -243,29 +254,32 @@ def auths(private_key, account, auths):
         challenges = response['challenges']
         for c in challenges:
             c['domain'] = response['identifier']['value']
-        result.extend(response['challenges'])
+            result.append(c)
     return result
 
-def prompt_dns_challenge(private_key, account, url):
-    payload = {}
+def prompt_challenge(private_key, account, url):
+    payload = {} # this is important
     make_request(private_key, account, url, payload)
 
-def prepare_dns_response(private_key, challenge):
+def prepare_response(private_key, challenge):
     to_be_hashed = bytes(challenge['token'], 'utf-8') + b'.' + get_jwk_thumbprint(private_key)
+    f = open(FILE_PATH + 'http.' + challenge['domain'], 'w')
+    f.write(to_be_hashed.decode('utf-8'))
+    f.close()
     txt_record = base64_encode_as_string(hash_256(to_be_hashed))
-    f = open(FILE_PATH + '_acme-challenge.' + challenge['domain'], 'w')
+    f = open(FILE_PATH + 'dns.' + challenge['domain'], 'w')
     f.write(txt_record)
     f.close()
 
-def do_dns_challenge(domains, private_key, account, order):
+def do_challenge(challenge_type, domains, private_key, account, order):
     challenges = auths(private_key, account, order['authorizations'])
+    to_look_for = ''
+    if challenge_type == 'dns01': to_look_for = 'dns-01'
+    if challenge_type == 'http01': to_look_for = 'http-01'
     for c in challenges:
-        if c['type'] == 'dns-01':
-            prepare_dns_response(private_key, c)
-
-    for c in challenges:
-        if c['type'] == 'dns-01':
-            prompt_dns_challenge(private_key, account, c['url'])
+        if c['type'] == to_look_for:
+            prepare_response(private_key, c)
+            prompt_challenge(private_key, account, c['url'])
 
 def make_csr_request(domains, private_key, account, order):
     x509_dnsnames = []
@@ -298,7 +312,7 @@ def download_certificate(private_key, account, order):
     print('CERTIFICATE_RESPONSE')
     prettyprinter.pprint(response)
     return response
-    
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Do some stuff')
     parser.add_argument('challenge', metavar='CHALLENGE', help='Type of challenge')
@@ -314,14 +328,13 @@ if __name__ == '__main__':
     AcmeDNSChallengeHandler.ip = args.record
     acme_dns_challenge_server = UDPServer(('', 10053), AcmeDNSChallengeHandler)
     
-    acme_http_challenge_server = HTTPServer(('', 5002), AcmeHTTPChallengeHandler)
+    acme_http_challenge_server = HTTPServer((args.record, 5002), AcmeHTTPChallengeHandler)
 
     shutdown_server = HTTPServer(('', 5003), ShutdownHandler)
         
     executor.submit(acme_dns_challenge_server.serve_forever)
     executor.submit(acme_http_challenge_server.serve_forever)
     executor.submit(shutdown_server.serve_forever)
-    print('here')
 
     dir_listing = requests.get(args.dir_url, verify=ACME_SERVER_CERT).json()
     NEW_ACCOUNT_URL = dir_listing['newAccount']
@@ -341,7 +354,7 @@ if __name__ == '__main__':
 
     account = new_account(private_key)
     order = new_order(args.domains, private_key, account)
-    do_dns_challenge(args.domains, private_key, account, order)
+    do_challenge(args.challenge, args.domains, private_key, account, order)
     time.sleep(10)
     print('------------FIRST---------------')
     make_csr_request(args.domains, private_key, account, order)
