@@ -21,7 +21,6 @@ import base64
 import io
 import json
 import os
-import prettyprinter
 import random
 import re
 import requests
@@ -40,6 +39,8 @@ try:
 except:
     pass
 
+DEBUG = True
+
 DNS_HEADER = '!HBBHHHH'
 DNS_HEADER_SIZE = struct.calcsize(DNS_HEADER)
 DNS_DOMAIN_PATTERN = re.compile('^[A-Za-z0-9\-\.\_]+$')
@@ -51,7 +52,9 @@ REVOKE_CERT_URL = None
 
 ACME_SERVER_CERT = './pebble_https_ca.pem'
 
-prettyprinter.install_extras(['requests'])
+if DEBUG:
+    import prettyprinter
+    prettyprinter.install_extras(['requests'])
 
 def read_answer(name):
     ans = ''
@@ -203,7 +206,7 @@ def make_request(private_key, account, url, payload, count = 10):
 
     r = requests.post(url, data=json.dumps(data), headers=request_headers, verify=ACME_SERVER_CERT)
 
-    prettyprinter.pprint(r.headers)
+    if DEBUG: prettyprinter.pprint(r.headers)
 
     try:
         if r.json().get('type') == 'urn:ietf:params:acme:error:badNonce':
@@ -222,8 +225,9 @@ def new_account(private_key):
 
     headers, response = make_request(private_key, None, NEW_ACCOUNT_URL, payload)
 
-    print('ACCOUNT')
-    prettyprinter.pprint(response)
+    if DEBUG:
+        print('ACCOUNT')
+        prettyprinter.pprint(response)
 
     return headers['Location']
 
@@ -240,8 +244,11 @@ def new_order(domains, private_key, account):
 
     headers, response = make_request(private_key, account, NEW_ORDER_URL, payload)
     response['order_url'] = headers['Location']
-    print('ORDER')
-    prettyprinter.pprint(response)
+
+    if DEBUG:
+        print('ORDER')
+        prettyprinter.pprint(response)
+        
     return response
 
 def auths(private_key, account, auths):
@@ -249,8 +256,9 @@ def auths(private_key, account, auths):
     result = []
     for url in auths:
         _, response = make_request(private_key, account, url, payload)
-        print('AUTH_RESPONSE')
-        prettyprinter.pprint(response)
+        if DEBUG:
+            print('AUTH_RESPONSE')
+            prettyprinter.pprint(response)
         challenges = response['challenges']
         for c in challenges:
             c['domain'] = response['identifier']['value']
@@ -296,21 +304,24 @@ def make_csr_request(domains, private_key, account, order):
     payload = {}
     payload['csr'] = base64_encode_as_string(csr.public_bytes(serialization.Encoding.DER))
     headers, response = make_request(private_key, account, order['finalize'], payload)
-    print('CSR_RESPONSE')
-    prettyprinter.pprint(response)
+    if DEBUG:
+        print('CSR_RESPONSE')
+        prettyprinter.pprint(response)
 
 def poll_order(private_key, account, order):
     payload = None
     headers, response = make_request(private_key, account, order['order_url'], payload)
-    print('Polling response')
-    prettyprinter.pprint(response)
+    if DEBUG:
+        print('Polling response')
+        prettyprinter.pprint(response)
     return response
 
 def download_certificate(private_key, account, order):
     payload = None
     headers, response = make_request(private_key, account, order['certificate'], payload)
-    print('CERTIFICATE_RESPONSE')
-    prettyprinter.pprint(response)
+    if DEBUG:
+        print('CERTIFICATE_RESPONSE')
+        prettyprinter.pprint(response)
     return response
 
 if __name__ == '__main__':
