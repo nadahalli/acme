@@ -17,6 +17,11 @@ data_path = ''
 
 class DNSHandler(socketserver.BaseRequestHandler):
 
+  def inbytes(self, ip):
+    parts = ip.split('.')
+    b = [int(part) for part in parts]
+    return struct.pack('BBBB', *b)
+
   def handle(self):
     socket = self.request[1]
     data = self.request[0]
@@ -81,7 +86,14 @@ class DNSHandler(socketserver.BaseRequestHandler):
       response.write(struct.pack('B', len(a))) # TXT length
       response.write(a.encode('us-ascii')) # Text
 
+    response.write(b'\xc0\x0c') # Compressed name (pointer to question)
+    response.write(struct.pack('!HH', 1, 1))
+    response.write(struct.pack('!I', 0)) # TTL: 0
+    response.write(struct.pack('!H', 4)) # Record length
+    response.write(self.inbytes("1.2.3.4"))
+
     # Send response
+    print(response.getvalue())
     socket.sendto(response.getvalue(), self.client_address)
 
 if __name__ == '__main__':

@@ -339,18 +339,10 @@ if __name__ == '__main__':
     
     acme_http_challenge_server = HTTPServer(('', 5002), AcmeHTTPChallengeHandler)
 
-    certificate_server = HTTPServer(('', 5001), CertificateHandler)
-    """
-        certificate_server.socket = wrap_socket(certificate_server.socket,
-                                            keyfile='./key.pem',
-                                            certfile='./cert.pem',
-                                            server_side=True)
-    """
     shutdown_server = HTTPServer(('', 5003), ShutdownHandler)
         
     executor.submit(acme_dns_challenge_server.serve_forever)
     executor.submit(acme_http_challenge_server.serve_forever)
-    executor.submit(certificate_server.serve_forever)
     executor.submit(shutdown_server.serve_forever)
     print('here')
 
@@ -361,6 +353,14 @@ if __name__ == '__main__':
     REVOKE_CERT_URL = dir_listing['revokeCert']
 
     private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+    pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption()
+    )
+    keyf = open('./key.pem', 'wb')
+    keyf.write(pem)
+    keyf.close()
 
     account = new_account(private_key)
     order = new_order(args.domains, private_key, account)
@@ -372,7 +372,7 @@ if __name__ == '__main__':
     print('------------SECOND---------------')
     order = poll_order(private_key, account, order)
     certificate = download_certificate(private_key, account, order)
-    certf = open('cert.pem', 'w')
+    certf = open('./cert.pem', 'w')
     certf.write(certificate)
     certf.close()
         
