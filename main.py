@@ -14,7 +14,6 @@ from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion, TXT, Q
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http.client import parse_headers
 from socketserver import BaseRequestHandler, UDPServer
-from ssl import wrap_socket
 
 import argparse
 import base64
@@ -24,6 +23,8 @@ import os
 import random
 import re
 import requests
+import socket
+import ssl
 import struct
 import struct
 import sys
@@ -100,16 +101,34 @@ class AcmeHTTPChallengeHandler(BaseHTTPRequestHandler):
         self.wfile.write(answer.encode('utf-8'))
         return
 
-class CertificateHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
-        self.wfile.write(b"Hello World!\n")
-        return
+class CertificateServer:
+    def __init__(self, host, port, cert, key):
+        self.sock = socket.socket()
+        self.sock.bind((host, port))
+        self.sock.listen(5)
+        self.context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        self.context.load_cert_chain(certfile=cert, keyfile=key)
+
+    def handle(self, conn):
+        conn.write(b'HTTP/1.1 200 OK\n\n%s' % conn.getpeername()[0].encode())
+        
+    def serve_forever(self):
+        while True:
+            conn = None
+            ssock, addr = self.sock.accept()
+            try:
+                conn = self.context.wrap_socket(ssock, server_side=True)
+                self.handle(conn)
+            except ssl.SSLError as e:
+                print(e)
+            finally:
+                if conn:
+                    conn.close()
 
 class ShutdownHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if DEBUG:
+            print('Shutdown called')
         if (self.path == '/shutdown'):
             os.kill(os.getpid(), 9)
 
@@ -324,23 +343,36 @@ def download_certificate(private_key, account, order):
         prettyprinter.pprint(response)
     return response
 
+def revoke_certificate(private_key, account, certificate_pem):
+    cert = x509.load_pem_x509_certificate(certificate_pem.encode('utf-8'), default_backend())
+    payload = {}
+    payload['certificate'] = base64_encode_as_string(cert.public_bytes(serialization.Encoding.DER))
+    payload['reason'] = 4
+    headers, response = make_request(private_key, account, REVOKE_CERT_URL, payload)
+    if DEBUG:
+        print('REVOKE_HEADERS')
+        prettyprinter.pprint(headers)
+        print('REVOKE_RESPONSE')
+        prettyprinter.pprint(response)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Do some stuff')
-    parser.add_argument('challenge', metavar='CHALLENGE', help='Type of challenge')
-    parser.add_argument('--dir', metavar='DIR_URL', help='URL of the ACME server', required=True, dest='dir_url')
-    parser.add_argument('--record', metavar='IPv4 ADDRESS', help='IPv4 address which must be returned by the DNS server for all A-record queries', required=True)
-    parser.add_argument('--domain', metavar='DOMAIN', help='DOMAIN is the domain for which to request the certificate', required=True, action='append', dest='domains')
-    parser.add_argument('--revoke', metavar='REVOKE', help='Should be a revoked certificate')
+    parser.add_argument('challenge', help='Type of challenge')
+    parser.add_argument('--dir', help='URL of the ACME server', required=True, dest='dir_url')
+    parser.add_argument('--record', help='IPv4 address which must be returned by the DNS server for all A-record queries', required=True)
+    parser.add_argument('--domain', help='DOMAIN is the domain for which to request the certificate', required=True, action='append', dest='domains')
+    parser.add_argument('--revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
+    parser.add_argument('--no-revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
+    parser.set_defaults(feature=False)
     
     args = parser.parse_args()
 
     executor = ThreadPoolExecutor(max_workers=4)
 
     AcmeDNSChallengeHandler.ip = args.record
-    acme_dns_challenge_server = UDPServer(('', 10053), AcmeDNSChallengeHandler)
-    
-    acme_http_challenge_server = HTTPServer((args.record, 5002), AcmeHTTPChallengeHandler)
 
+    acme_dns_challenge_server = UDPServer(('', 10053), AcmeDNSChallengeHandler)
+    acme_http_challenge_server = HTTPServer((args.record, 5002), AcmeHTTPChallengeHandler)
     shutdown_server = HTTPServer(('', 5003), ShutdownHandler)
         
     executor.submit(acme_dns_challenge_server.serve_forever)
@@ -367,15 +399,24 @@ if __name__ == '__main__':
     order = new_order(args.domains, private_key, account)
     do_challenge(args.challenge, args.domains, private_key, account, order)
     time.sleep(10)
-    print('------------FIRST---------------')
+    if DEBUG: print('------------FIRST---------------')
     make_csr_request(args.domains, private_key, account, order)
     time.sleep(10)
-    print('------------SECOND---------------')
+    if DEBUG: print('------------SECOND---------------')
     order = poll_order(private_key, account, order)
-    certificate = download_certificate(private_key, account, order)
+    certificate_pem = download_certificate(private_key, account, order)
     certf = open('./cert.pem', 'w')
-    certf.write(certificate)
+    certf.write(certificate_pem)
     certf.close()
+
+    if (args.revoke):
+        revoke_certificate(private_key, account, certificate_pem)
+
+    certificate_server = CertificateServer('', 5001, './cert.pem', './key.pem')
+
+    
+    
+    executor.submit(certificate_server.serve_forever())
         
 
     
