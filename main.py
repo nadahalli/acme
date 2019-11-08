@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion, TXT, QTYPE
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import BaseRequestHandler, UDPServer
 from ssl import wrap_socket
@@ -28,7 +29,16 @@ import struct
 import sys
 import time
 
+import socketserver
+import argparse
+import io
+
 FILE_PATH = 'files/'
+try:
+    os.mkdir(FILE_PATH)
+except:
+    pass
+
 DNS_HEADER = '!HBBHHHH'
 DNS_HEADER_SIZE = struct.calcsize(DNS_HEADER)
 DNS_DOMAIN_PATTERN = re.compile('^[A-Za-z0-9\-\.\_]+$')
@@ -43,65 +53,31 @@ ACME_SERVER_CERT = './pebble_https_ca.pem'
 prettyprinter.install_extras(['requests'])
 
 class AcmeDNSChallengeHandler(BaseRequestHandler):
-    def parse(self, data):
-        dns_request = DNSRecord.parse(data)
-        print(dns_request)
+    ip = None
         
     def handle(self):
-        socket = self.request[1]
         data = self.request[0]
-        data_stream = io.BytesIO(data)
-
-        (request_id, header_a, header_b, qd_count, an_count, ns_count, ar_count) = struct.unpack(DNS_HEADER, data_stream.read(DNS_HEADER_SIZE))
-
-        q = None
-
-        if qd_count != 1:
-            return
-        
-        name_parts = []
-        length = struct.unpack('B', data_stream.read(1))[0]
-        while length != 0:
-            name_parts.append(data_stream.read(length).decode('us-ascii'))
-            length = struct.unpack('B', data_stream.read(1))[0]
-        name = '.'.join(name_parts)
-
-        (qtype, qclass) = struct.unpack('!HH', data_stream.read(4))
-
-        q = {'name': name,
-             'type': qtype,
-             'class': qclass};
+        socket = self.request[1]
+    
+        d = DNSRecord.parse(data)
+        q = d.questions[0]
+        name = '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label))
 
         ans = ''
-
         try:
-            apath = FILE_PATH + q['name'].lower()
+            apath = FILE_PATH + name.lower()
             afile = open(apath, 'r')
             ans = afile.read().strip()
             afile.close()
         except:
             pass
+        
+        a = d.reply()
+        a.add_answer(RR(name, QTYPE.A, rdata=A(self.ip)))
+        a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(ans)))
+        print('Asked about', name, 'and anwered with', a.pack())
+        socket.sendto(a.pack(), self.client_address)
 
-        response = io.BytesIO()
-
-        response_header = struct.pack(DNS_HEADER, request_id, 0b10000100, 0b00000000, qd_count, 1, 0, 0)
-        response.write(response_header)
-
-        for part in q['name'].split('.'):
-            response.write(struct.pack('B', len(part)))
-            response.write(part.encode('us-ascii'))
-        response.write(b'\x00')
-        response.write(struct.pack('!HH', q['type'], q['class']))
-
-        response.write(b'\xc0\x0c')
-        response.write(struct.pack('!HH', 16, 1))
-        response.write(struct.pack('!I', 0))
-        response.write(struct.pack('!H', len(ans) + 1))
-        response.write(struct.pack('B', len(ans)))
-        response.write(ans.encode('us-ascii'))
-
-        print('Asked about', q['name'], 'and anwered with', response.getvalue())
-        socket.sendto(response.getvalue(), self.client_address)
 
 class AcmeHTTPChallengeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -335,6 +311,7 @@ if __name__ == '__main__':
 
     executor = ThreadPoolExecutor(max_workers=4)
 
+    AcmeDNSChallengeHandler.ip = args.record
     acme_dns_challenge_server = UDPServer(('', 10053), AcmeDNSChallengeHandler)
     
     acme_http_challenge_server = HTTPServer(('', 5002), AcmeHTTPChallengeHandler)
