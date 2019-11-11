@@ -52,6 +52,7 @@ if DEBUG:
     import prettyprinter
     prettyprinter.install_extras(['requests'])
 
+
 def read_answer(name):
     ans = ''
     try:
@@ -65,27 +66,29 @@ def read_answer(name):
         pass
     return ans
 
+
 class AcmeDNSChallengeHandler(BaseRequestHandler):
     ip = None
-        
+
     def handle(self):
         data = self.request[0]
         socket = self.request[1]
-    
+
         d = DNSRecord.parse(data)
         q = d.questions[0]
-        name = 'dns.' + '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label[1:]))
+        name = 'dns.' + '.'.join(
+            map(lambda x: x.decode('utf-8'), q.qname.label[1:]))
         name = name.lower()
-        
+
         ans = read_answer(name)
 
         a = d.reply()
         a.add_answer(RR(name, QTYPE.A, rdata=A(self.ip)))
-        a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(ans)))
+        a.add_answer(RR(name, QTYPE.TXT, rdata=TXT(ans)))
         wildcard_answer = read_answer(WILDCARD_PREFIX + name)
         if wildcard_answer != None:
-            a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(wildcard_answer)))
-            
+            a.add_answer(RR(name, QTYPE.TXT, rdata=TXT(wildcard_answer)))
+
         if DEBUG:
             print('Asked about', q.qname.label, 'and anwered with', a.pack())
         socket.sendto(a.pack(), self.client_address)
@@ -94,12 +97,13 @@ class AcmeDNSChallengeHandler(BaseRequestHandler):
 class AcmeHTTPChallengeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type','text/html')
+        self.send_header('Content-type', 'text/html')
         self.end_headers()
         name = 'http.' + self.headers['Host'].split(':')[0]
         answer = read_answer(name)
         self.wfile.write(answer.encode('utf-8'))
         return
+
 
 class CertificateServer:
     def __init__(self, host, port, cert, key):
@@ -111,7 +115,7 @@ class CertificateServer:
 
     def handle(self, conn):
         conn.write(b'HTTP/1.1 200 OK\n\n%s' % conn.getpeername()[0].encode())
-        
+
     def serve_forever(self):
         while True:
             conn = None
@@ -125,6 +129,7 @@ class CertificateServer:
                 if conn:
                     conn.close()
 
+
 class ShutdownHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if DEBUG:
@@ -132,18 +137,24 @@ class ShutdownHandler(BaseHTTPRequestHandler):
         if (self.path == '/shutdown'):
             os.kill(os.getpid(), 9)
 
+
 def encode_json_as_bytes(j):
     return json.dumps(j, separators=(',', ':'), sort_keys=True).encode('utf-8')
 
+
 def base64_encode_as_bytes(data):
-    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=').encode('utf-8')
+    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=').encode(
+        'utf-8')
+
 
 def base64_encode_as_string(data):
     return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
 
+
 def get_nonce():
     r = requests.head(NONCE_URL, verify=ACME_SERVER_CERT)
     return r.headers['Replay-Nonce']
+
 
 def get_large_int_as_bytes(i, size):
     padding = ((size + 7) // 8) * 2
@@ -155,8 +166,10 @@ def get_large_int_as_bytes(i, size):
         padding = length % 2
     return unhexlify(padding * '0' + hi)
 
+
 def get_large_int_as_base64(i, size):
     return base64_encode_as_string(get_large_int_as_bytes(i, size))
+
 
 def get_jwk(private_key):
     private_numbers = private_key.private_numbers()
@@ -169,20 +182,28 @@ def get_jwk(private_key):
     jwk['y'] = get_large_int_as_base64(public_numbers.y, size)
     return jwk
 
+
 def sign(private_key, data):
-    signature = decode_dss_signature(private_key.sign(data, ec.ECDSA(hashes.SHA256())))
+    signature = decode_dss_signature(
+        private_key.sign(data, ec.ECDSA(hashes.SHA256())))
     private_numbers = private_key.private_numbers()
     public_numbers = private_numbers.public_numbers
     size = public_numbers.curve.key_size
-    return base64_encode_as_string(get_large_int_as_bytes(signature[0], size) + get_large_int_as_bytes(signature[1], size))
+    return base64_encode_as_string(
+        get_large_int_as_bytes(signature[0], size) +
+        get_large_int_as_bytes(signature[1], size))
+
 
 def hash_256(data_as_bytes):
     digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
     digest.update(data_as_bytes)
     return digest.finalize()
 
+
 def get_jwk_thumbprint(private_key):
-    return base64_encode_as_bytes(hash_256(encode_json_as_bytes(get_jwk(private_key))))
+    return base64_encode_as_bytes(
+        hash_256(encode_json_as_bytes(get_jwk(private_key))))
+
 
 def get_jws_params(private_key, url, kid=None):
     jws_params = {}
@@ -200,16 +221,18 @@ def get_jws_params(private_key, url, kid=None):
 
 
 def jws_encode_sign(private_key, payload_dict, jws_params):
-    to_be_signed = base64_encode_as_bytes(encode_json_as_bytes(jws_params)) + b'.'
+    to_be_signed = base64_encode_as_bytes(
+        encode_json_as_bytes(jws_params)) + b'.'
     if payload_dict != None:
-        to_be_signed +=  base64_encode_as_bytes(
+        to_be_signed += base64_encode_as_bytes(
             encode_json_as_bytes(payload_dict))
     else:
         to_be_signed += b''
 
     return sign(private_key, to_be_signed)
 
-def make_request(private_key, account, url, payload, count = 10):
+
+def make_request(private_key, account, url, payload, count=10):
     if (count == 0):
         return
     request_headers = {}
@@ -218,12 +241,20 @@ def make_request(private_key, account, url, payload, count = 10):
     jws_params = get_jws_params(private_key, url, account)
 
     data = {
-        'payload': base64_encode_as_string(encode_json_as_bytes(payload)) if payload != None else '',
-        'signature': jws_encode_sign(private_key, payload, jws_params),
-        'protected': base64_encode_as_string(encode_json_as_bytes(jws_params)),
+        'payload':
+        base64_encode_as_string(encode_json_as_bytes(payload))
+        if payload != None else '',
+        'signature':
+        jws_encode_sign(private_key, payload, jws_params),
+        'protected':
+        base64_encode_as_string(encode_json_as_bytes(jws_params)),
     }
 
-    r = requests.post(url, data=json.dumps(data), headers=request_headers, verify=ACME_SERVER_CERT)
+    r = requests.post(
+        url,
+        data=json.dumps(data),
+        headers=request_headers,
+        verify=ACME_SERVER_CERT)
 
     if DEBUG: prettyprinter.pprint(r.headers)
 
@@ -237,13 +268,15 @@ def make_request(private_key, account, url, payload, count = 10):
     except json.decoder.JSONDecodeError:
         return r.headers, r.text
 
+
 def new_account(private_key):
     payload = {}
     payload['Contact'] = []
     payload['TermsOfServiceAgreed'] = True
     payload['OnlyReturnExisting'] = False
 
-    headers, response = make_request(private_key, None, NEW_ACCOUNT_URL, payload)
+    headers, response = make_request(private_key, None, NEW_ACCOUNT_URL,
+                                     payload)
 
     if DEBUG:
         print('ACCOUNT')
@@ -251,25 +284,25 @@ def new_account(private_key):
 
     return headers['Location']
 
+
 def new_order(domains, private_key, account):
     payload = {}
     ids = []
 
     for domain in domains:
-        ids.append({
-            'type': 'dns',
-            'value': domain
-        })
+        ids.append({'type': 'dns', 'value': domain})
     payload['identifiers'] = ids
 
-    headers, response = make_request(private_key, account, NEW_ORDER_URL, payload)
+    headers, response = make_request(private_key, account, NEW_ORDER_URL,
+                                     payload)
     response['order_url'] = headers['Location']
 
     if DEBUG:
         print('ORDER')
         prettyprinter.pprint(response)
-        
+
     return response
+
 
 def auths(private_key, account, auths):
     payload = None
@@ -287,12 +320,15 @@ def auths(private_key, account, auths):
             result.append(c)
     return result
 
+
 def prompt_challenge(private_key, account, url):
-    payload = {} # this is important
+    payload = {}  # this is important
     make_request(private_key, account, url, payload)
 
+
 def prepare_response(private_key, challenge):
-    to_be_hashed = bytes(challenge['token'], 'utf-8') + b'.' + get_jwk_thumbprint(private_key)
+    to_be_hashed = bytes(challenge['token'],
+                         'utf-8') + b'.' + get_jwk_thumbprint(private_key)
     wildcard_prefix = ''
     if DEBUG: print(challenge)
     if challenge.get('wildcard') != None:
@@ -304,7 +340,7 @@ def prepare_response(private_key, challenge):
     f = open(FILE_PATH + wildcard_prefix + 'dns.' + challenge['domain'], 'w')
     f.write(txt_record)
     f.close()
-        
+
 
 def do_challenge(challenge_type, domains, private_key, account, order):
     challenges = auths(private_key, account, order['authorizations'])
@@ -316,64 +352,97 @@ def do_challenge(challenge_type, domains, private_key, account, order):
             prepare_response(private_key, c)
             prompt_challenge(private_key, account, c['url'])
 
+
 def make_csr_request(domains, private_key, account, order):
     x509_dnsnames = []
     for domain in domains:
         x509_dnsnames.append(x509.DNSName(domain))
-                             
-    csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, u'CH'),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u'Schwyz'),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, u'Wollerau'),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u'Intamin'),
-    ])).add_extension(x509.SubjectAlternativeName(x509_dnsnames), critical=False).sign(private_key, hashes.SHA256(), default_backend())
+
+    csr = x509.CertificateSigningRequestBuilder().subject_name(
+        x509.Name([
+            x509.NameAttribute(NameOID.COUNTRY_NAME, u'CH'),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u'Schwyz'),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, u'Wollerau'),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, u'Intamin'),
+        ])).add_extension(
+            x509.SubjectAlternativeName(x509_dnsnames), critical=False).sign(
+                private_key, hashes.SHA256(), default_backend())
 
     payload = {}
-    payload['csr'] = base64_encode_as_string(csr.public_bytes(serialization.Encoding.DER))
-    headers, response = make_request(private_key, account, order['finalize'], payload)
+    payload['csr'] = base64_encode_as_string(
+        csr.public_bytes(serialization.Encoding.DER))
+    headers, response = make_request(private_key, account, order['finalize'],
+                                     payload)
     if DEBUG:
         print('CSR_RESPONSE')
         prettyprinter.pprint(response)
 
+
 def poll_order(private_key, account, order):
     payload = None
-    headers, response = make_request(private_key, account, order['order_url'], payload)
+    headers, response = make_request(private_key, account, order['order_url'],
+                                     payload)
     if DEBUG:
         print('Polling response')
         prettyprinter.pprint(response)
     response['order_url'] = order['order_url']
     return response
 
+
 def download_certificate(private_key, account, order):
     payload = None
-    headers, response = make_request(private_key, account, order['certificate'], payload)
+    headers, response = make_request(private_key, account,
+                                     order['certificate'], payload)
     if DEBUG:
         print('CERTIFICATE_RESPONSE')
         prettyprinter.pprint(response)
     return response
 
+
 def revoke_certificate(private_key, account, certificate_pem):
-    cert = x509.load_pem_x509_certificate(certificate_pem.encode('utf-8'), default_backend())
+    cert = x509.load_pem_x509_certificate(
+        certificate_pem.encode('utf-8'), default_backend())
     payload = {}
-    payload['certificate'] = base64_encode_as_string(cert.public_bytes(serialization.Encoding.DER))
+    payload['certificate'] = base64_encode_as_string(
+        cert.public_bytes(serialization.Encoding.DER))
     payload['reason'] = 4
-    headers, response = make_request(private_key, account, REVOKE_CERT_URL, payload)
+    headers, response = make_request(private_key, account, REVOKE_CERT_URL,
+                                     payload)
     if DEBUG:
         print('REVOKE_HEADERS')
         prettyprinter.pprint(headers)
         print('REVOKE_RESPONSE')
         prettyprinter.pprint(response)
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Do some stuff')
     parser.add_argument('challenge', help='Type of challenge')
-    parser.add_argument('--dir', help='URL of the ACME server', required=True, dest='dir_url')
-    parser.add_argument('--record', help='IPv4 address which must be returned by the DNS server for all A-record queries', required=True)
-    parser.add_argument('--domain', help='DOMAIN is the domain for which to request the certificate', required=True, action='append', dest='domains')
-    parser.add_argument('--revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
-    parser.add_argument('--no-revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
+    parser.add_argument(
+        '--dir', help='URL of the ACME server', required=True, dest='dir_url')
+    parser.add_argument(
+        '--record',
+        help=
+        'IPv4 address which must be returned by the DNS server for all A-record queries',
+        required=True)
+    parser.add_argument(
+        '--domain',
+        help='DOMAIN is the domain for which to request the certificate',
+        required=True,
+        action='append',
+        dest='domains')
+    parser.add_argument(
+        '--revoke',
+        help='Should be a revoked certificate',
+        action='store_true',
+        dest='revoke')
+    parser.add_argument(
+        '--no-revoke',
+        help='Should be a revoked certificate',
+        action='store_true',
+        dest='revoke')
     parser.set_defaults(revoke=False)
-    
+
     args = parser.parse_args()
 
     if DEBUG: print(args)
@@ -383,9 +452,10 @@ if __name__ == '__main__':
     AcmeDNSChallengeHandler.ip = args.record
 
     acme_dns_challenge_server = UDPServer(('', 10053), AcmeDNSChallengeHandler)
-    acme_http_challenge_server = HTTPServer((args.record, 5002), AcmeHTTPChallengeHandler)
+    acme_http_challenge_server = HTTPServer((args.record, 5002),
+                                            AcmeHTTPChallengeHandler)
     shutdown_server = HTTPServer(('', 5003), ShutdownHandler)
-        
+
     executor.submit(acme_dns_challenge_server.serve_forever)
     executor.submit(acme_http_challenge_server.serve_forever)
     executor.submit(shutdown_server.serve_forever)
@@ -398,10 +468,9 @@ if __name__ == '__main__':
 
     private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
     pem = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption()
-    )
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption())
     keyf = open(KEY_FILE, 'wb')
     keyf.write(pem)
     keyf.close()
@@ -424,5 +493,5 @@ if __name__ == '__main__':
         revoke_certificate(private_key, account, certificate_pem)
 
     certificate_server = CertificateServer('', 5001, CERT_FILE, KEY_FILE)
-    
+
     executor.submit(certificate_server.serve_forever())
