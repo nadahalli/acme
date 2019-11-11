@@ -2,7 +2,6 @@
 
 from binascii import hexlify, unhexlify
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ProcessPoolExecutor
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
@@ -12,15 +11,12 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from dnslib import DNSRecord, DNSHeader, DNSQuestion, RR, A, DNSQuestion, TXT, QTYPE
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from http.client import parse_headers
 from socketserver import BaseRequestHandler, UDPServer
 
 import argparse
 import base64
-import io
 import json
 import os
-import random
 import re
 import requests
 import socket
@@ -29,10 +25,6 @@ import struct
 import struct
 import sys
 import time
-
-import socketserver
-import argparse
-import io
 
 FILE_PATH = 'files/'
 WILDCARD_PREFIX = 'wildcard.'
@@ -291,8 +283,6 @@ def auths(private_key, account, auths):
         for c in challenges:
             c['domain'] = response['identifier']['value']
             if response.get('wildcard') != None:
-                if DEBUG:
-                    print('WILDCARD FOUND!!!!!!!!!!!!!')
                 c['wildcard'] = True
             result.append(c)
     return result
@@ -351,6 +341,7 @@ def poll_order(private_key, account, order):
     if DEBUG:
         print('Polling response')
         prettyprinter.pprint(response)
+    response['order_url'] = order['order_url']
     return response
 
 def download_certificate(private_key, account, order):
@@ -381,7 +372,7 @@ if __name__ == '__main__':
     parser.add_argument('--domain', help='DOMAIN is the domain for which to request the certificate', required=True, action='append', dest='domains')
     parser.add_argument('--revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
     parser.add_argument('--no-revoke', help='Should be a revoked certificate', action='store_true', dest='revoke')
-    parser.set_defaults(feature=False)
+    parser.set_defaults(revoke=False)
     
     args = parser.parse_args()
 
