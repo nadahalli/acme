@@ -1,4 +1,8 @@
-Acme(V2) client with associated DNS server, HTTP challenge server, and HTTPS certificate server.                
+Rudimentary Acme(V2) client with associated DNS server, HTTP challenge server, and HTTPS certificate server.          
+
+The Automatic Certificate Management Environment (ACME) protocol is a communications protocol for automating interactions between certificate authorities and their users' web servers, allowing the automated deployment of public key infrastructure at very low cost. It was designed by the Internet Security Research Group (ISRG) for their Let's Encrypt service.
+
+The protocol, based on passing JSON-formatted messages over HTTPS, has been published as an Internet Standard in RFC 8555 (https://tools.ietf.org/html/rfc8555).
 
 #### Command-line arguments                                                                                                                                                                                                                   
 ##### Positional Arguments
