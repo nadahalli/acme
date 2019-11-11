@@ -35,12 +35,15 @@ import argparse
 import io
 
 FILE_PATH = 'files/'
+WILDCARD_PREFIX = 'wildcard.'
 try:
     os.mkdir(FILE_PATH)
 except:
     pass
+CERT_FILE = FILE_PATH + 'cert.pem'
+KEY_FILE = FILE_PATH + 'key.pem'
 
-DEBUG = True
+DEBUG = False
 
 DNS_HEADER = '!HBBHHHH'
 DNS_HEADER_SIZE = struct.calcsize(DNS_HEADER)
@@ -60,15 +63,15 @@ if DEBUG:
 def read_answer(name):
     ans = ''
     try:
-        apath = FILE_PATH + name.lower()
-        print('Trying to open file ', apath)
+        apath = FILE_PATH + name
+        if DEBUG:
+            print('Trying to open file ', apath)
         afile = open(apath, 'r')
         ans = afile.read().strip()
         afile.close()
     except:
         pass
     return ans
-
 
 class AcmeDNSChallengeHandler(BaseRequestHandler):
     ip = None
@@ -80,13 +83,19 @@ class AcmeDNSChallengeHandler(BaseRequestHandler):
         d = DNSRecord.parse(data)
         q = d.questions[0]
         name = 'dns.' + '.'.join(map(lambda x: x.decode('utf-8'), q.qname.label[1:]))
-
+        name = name.lower()
+        
         ans = read_answer(name)
 
         a = d.reply()
         a.add_answer(RR(name, QTYPE.A, rdata=A(self.ip)))
         a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(ans)))
-        print('Asked about', name, 'and anwered with', a.pack())
+        wildcard_answer = read_answer(WILDCARD_PREFIX + name)
+        if wildcard_answer != None:
+            a.add_answer(RR(name, QTYPE.TXT,rdata=TXT(wildcard_answer)))
+            
+        if DEBUG:
+            print('Asked about', q.qname.label, 'and anwered with', a.pack())
         socket.sendto(a.pack(), self.client_address)
 
 
@@ -97,7 +106,6 @@ class AcmeHTTPChallengeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         name = 'http.' + self.headers['Host'].split(':')[0]
         answer = read_answer(name)
-        print('-' * 10, answer)
         self.wfile.write(answer.encode('utf-8'))
         return
 
@@ -229,7 +237,8 @@ def make_request(private_key, account, url, payload, count = 10):
 
     try:
         if r.json().get('type') == 'urn:ietf:params:acme:error:badNonce':
-            print('Retrying due to bad nonce....')
+            if DEBUG:
+                print('Retrying due to bad nonce....')
             return make_request(private_key, account, url, payload, count - 1)
         else:
             return r.headers, r.json()
@@ -281,6 +290,10 @@ def auths(private_key, account, auths):
         challenges = response['challenges']
         for c in challenges:
             c['domain'] = response['identifier']['value']
+            if response.get('wildcard') != None:
+                if DEBUG:
+                    print('WILDCARD FOUND!!!!!!!!!!!!!')
+                c['wildcard'] = True
             result.append(c)
     return result
 
@@ -290,13 +303,18 @@ def prompt_challenge(private_key, account, url):
 
 def prepare_response(private_key, challenge):
     to_be_hashed = bytes(challenge['token'], 'utf-8') + b'.' + get_jwk_thumbprint(private_key)
-    f = open(FILE_PATH + 'http.' + challenge['domain'], 'w')
+    wildcard_prefix = ''
+    if DEBUG: print(challenge)
+    if challenge.get('wildcard') != None:
+        wildcard_prefix = WILDCARD_PREFIX
+    f = open(FILE_PATH + wildcard_prefix + 'http.' + challenge['domain'], 'w')
     f.write(to_be_hashed.decode('utf-8'))
     f.close()
     txt_record = base64_encode_as_string(hash_256(to_be_hashed))
-    f = open(FILE_PATH + 'dns.' + challenge['domain'], 'w')
+    f = open(FILE_PATH + wildcard_prefix + 'dns.' + challenge['domain'], 'w')
     f.write(txt_record)
     f.close()
+        
 
 def do_challenge(challenge_type, domains, private_key, account, order):
     challenges = auths(private_key, account, order['authorizations'])
@@ -367,6 +385,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
+    if DEBUG: print(args)
+
     executor = ThreadPoolExecutor(max_workers=4)
 
     AcmeDNSChallengeHandler.ip = args.record
@@ -391,7 +411,7 @@ if __name__ == '__main__':
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption()
     )
-    keyf = open('./key.pem', 'wb')
+    keyf = open(KEY_FILE, 'wb')
     keyf.write(pem)
     keyf.close()
 
@@ -405,19 +425,13 @@ if __name__ == '__main__':
     if DEBUG: print('------------SECOND---------------')
     order = poll_order(private_key, account, order)
     certificate_pem = download_certificate(private_key, account, order)
-    certf = open('./cert.pem', 'w')
+    certf = open(CERT_FILE, 'w')
     certf.write(certificate_pem)
     certf.close()
 
     if (args.revoke):
         revoke_certificate(private_key, account, certificate_pem)
 
-    certificate_server = CertificateServer('', 5001, './cert.pem', './key.pem')
-
-    
+    certificate_server = CertificateServer('', 5001, CERT_FILE, KEY_FILE)
     
     executor.submit(certificate_server.serve_forever())
-        
-
-    
-
